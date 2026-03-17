@@ -461,7 +461,7 @@
                          : null;
 
         // --- STATE VARIABLES ---
-        let totalInvited = parseInt(localStorage.getItem('weddingTotalInvited')) || 53;
+        let totalInvited = parseInt(localStorage.getItem('weddingTotalInvited')) || 0;
         let allRsvps = [];
         let allSongs = [];
         
@@ -707,12 +707,22 @@
             openModal('total-modal');
         });
 
-        el('save-total-btn').addEventListener('click', function() {
+        el('save-total-btn').addEventListener('click', async function() {
             const val = parseInt(el('total-input').value, 10);
             if (!isNaN(val)) {
-                totalInvited = val;
-                localStorage.setItem('weddingTotalInvited', totalInvited);
-                renderDashboard();
+                if (supabase) {
+                    try {
+                        const { error } = await supabase.from('dashboard_settings').upsert({ id: 1, total_invited: val });
+                        if (error) throw error;
+                    } catch(e) {
+                        console.error("Error updating total invited:", e);
+                        alert("Failed to update total guests globally.");
+                    }
+                } else {
+                    totalInvited = val;
+                    localStorage.setItem('weddingTotalInvited', totalInvited);
+                    renderDashboard();
+                }
                 el('total-modal').classList.add('hidden');
             }
         });
@@ -802,6 +812,15 @@
                 return;
             }
 
+            // Fetch Global Settings (Total Invited)
+            supabase.from('dashboard_settings').select('*').eq('id', 1).then(function(result) {
+                if (result.error) return console.error("Error fetching settings:", result.error);
+                if (result.data && result.data.length > 0) {
+                    totalInvited = result.data[0].total_invited;
+                    renderDashboard();
+                }
+            });
+
             // Fetch Guests
             supabase.from('rsvps').select('*').then(function(result) {
                 if (result.error) return console.error("Error fetching guests:", result.error);
@@ -839,6 +858,15 @@
                         allSongs = allSongs.filter(function(s) { return s.id !== payload.old.id; });
                     }
                     renderDashboard();
+                }).subscribe();
+
+            // Realtime Subscription for Settings
+            supabase.channel('public:dashboard_settings')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'dashboard_settings' }, function(payload) {
+                    if (payload.new && payload.new.id === 1) {
+                        totalInvited = payload.new.total_invited;
+                        renderDashboard();
+                    }
                 }).subscribe();
         }
 
@@ -1020,7 +1048,7 @@
                     
                     if (MASTER_CONFIG.features.showPartySize) tr.appendChild(createTableCell(rsvp.isAttending ? (rsvp.guestCount || '-') : '-', "p-5 text-center text-[15px] font-bold text-[#5C5247]"));
                     if (MASTER_CONFIG.features.showMessages) {
-                        const msgCell = createTableCell(escapeHTML(rsvp.note) || '<span class="italic opacity-50">-</span>', "p-5 text-sm text-[#7A6D5E] max-w-xs truncate");
+                        const msgCell = createTableCell(escapeHTML(rsvp.note) || '<span class="italic opacity-50">-</span>', "p-5 text-sm text-[#7A6D5E] min-w-[200px] max-w-sm whitespace-normal break-words");
                         msgCell.title = rsvp.note || "";
                         tr.appendChild(msgCell);
                     }
